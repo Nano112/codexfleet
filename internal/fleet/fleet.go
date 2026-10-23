@@ -77,6 +77,9 @@ func Effective(st *State) (string, bool) {
 	switch st.Status {
 	case StatusStarting, StatusRunning:
 		if Alive(st) {
+			if st.Paused {
+				return StatusPaused, true
+			}
 			return st.Status, true
 		}
 		// An adopted run has no supervisor to record its exit: a final message

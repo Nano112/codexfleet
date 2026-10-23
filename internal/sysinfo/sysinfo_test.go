@@ -76,3 +76,28 @@ func TestStartEpochCwdCommand(t *testing.T) {
 		t.Fatalf("Command = %q, %v", c, err)
 	}
 }
+
+func TestParsePS(t *testing.T) {
+	out := `    1     0  1234 Ss   /sbin/init splash
+  200     1 5093020 Sl  /usr/lib/jvm/bin/java -Xmx4g -jar x.jar
+  201   200     0 S    [kworker/0:1]
+  202     1   100 T    -bash
+garbage line
+`
+	ps := ParsePS(out)
+	if len(ps) != 4 {
+		t.Fatalf("%+v", ps)
+	}
+	if ps[1].Name != "java" || ps[1].RSS != 5093020*1024 || ps[1].PPID != 1 || ps[1].Args != "/usr/lib/jvm/bin/java -Xmx4g -jar x.jar" {
+		t.Fatalf("%+v", ps[1])
+	}
+	if ps[2].Name != "kworker/0:1" || ps[3].Name != "bash" || ps[3].State != "T" {
+		t.Fatalf("%+v %+v", ps[2], ps[3])
+	}
+	if live, err := Processes(); err != nil || len(live) == 0 {
+		t.Fatalf("Processes: %d, %v", len(live), err)
+	}
+	if tot, err := TotalRAM(); err != nil || tot == 0 {
+		t.Fatalf("TotalRAM: %d %v", tot, err)
+	}
+}

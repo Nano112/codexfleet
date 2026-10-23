@@ -94,3 +94,20 @@ func AvailableRAM() (uint64, error) {
 	}
 	return 0, errors.New("MemAvailable not found in /proc/meminfo")
 }
+
+// TotalRAM returns MemTotal in bytes.
+func TotalRAM() (uint64, error) {
+	b, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "MemTotal:") {
+			if fs := strings.Fields(line); len(fs) >= 2 {
+				kb, err := strconv.ParseUint(fs[1], 10, 64)
+				return kb * 1024, err
+			}
+		}
+	}
+	return 0, errors.New("MemTotal not found in /proc/meminfo")
+}

@@ -23,6 +23,19 @@ type FleetEntry struct {
 // registered fleet. With liveOnly, registered fleets without live tasks are
 // left out (current ones are always shown).
 func ListFleets(current []string, liveOnly bool) []FleetEntry {
+	return ListFleetsWith(current, ListOptions{LiveOnly: liveOnly, Registry: true})
+}
+
+// ListOptions controls ListFleetsWith.
+type ListOptions struct {
+	LiveOnly bool // drop registered fleets without live tasks
+	Registry bool // include registered fleets
+	Status   StatusOptions
+}
+
+// ListFleetsWith is ListFleets with options.
+func ListFleetsWith(current []string, o ListOptions) []FleetEntry {
+	liveOnly := o.LiveOnly
 	seen := map[string]bool{}
 	var out []FleetEntry
 	add := func(path string, isCurrent bool) {
@@ -35,7 +48,7 @@ func ListFleets(current []string, liveOnly bool) []FleetEntry {
 		if err == nil {
 			var f *Fleet
 			if f, err = New(cfg, io.Discard); err == nil {
-				e.Status, err = f.Status(nil)
+				e.Status, err = f.StatusWith(nil, o.Status)
 			}
 		}
 		if err != nil {
@@ -55,8 +68,10 @@ func ListFleets(current []string, liveOnly bool) []FleetEntry {
 	for _, p := range current {
 		add(p, true)
 	}
-	for _, r := range Registered() {
-		add(r.Path, false)
+	if o.Registry {
+		for _, r := range Registered() {
+			add(r.Path, false)
+		}
 	}
 	return out
 }

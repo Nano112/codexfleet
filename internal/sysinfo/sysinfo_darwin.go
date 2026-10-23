@@ -93,3 +93,12 @@ func AvailableRAM() (uint64, error) {
 	}
 	return pages * page, nil
 }
+
+// TotalRAM returns hw.memsize in bytes.
+func TotalRAM() (uint64, error) {
+	out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
+}

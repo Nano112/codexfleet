@@ -123,6 +123,7 @@ func (f *Fleet) Adopt(name string, o AdoptOptions) error {
 
 	st, err = f.update(name, func(s *State) error {
 		s.Status = StatusRunning
+		s.Paused = false
 		s.Adopted, s.AdoptedResult = true, files.LastMessage
 		s.Branch, s.Worktree, s.Base, s.BaseSHA, s.SessionID = branch, wt, r.Base, baseSHA, sid
 		s.SupervisorPID, s.SupervisorStart = 0, ""

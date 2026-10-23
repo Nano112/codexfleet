@@ -21,6 +21,8 @@ const (
 	StatusStopped  = "stopped" // stopped by `codexfleet stop`
 	StatusLost     = "lost"    // recorded as running but the process is gone (e.g. reboot)
 	StatusCleaned  = "cleaned" // worktree and branch removed
+	// StatusPaused is reported (never stored) for a live task frozen by `pause`.
+	StatusPaused = "paused"
 )
 
 // State is the persisted per-task record. It never holds env values or prompts.
@@ -42,6 +44,7 @@ type State struct {
 	ExitCode        *int       `json:"exit_code,omitempty"`
 	Signal          string     `json:"signal,omitempty"`
 	StopRequested   bool       `json:"stop_requested,omitempty"`
+	Paused          bool       `json:"paused,omitempty"` // frozen by `pause` (SIGSTOP)
 	Runs            int        `json:"runs"`
 	Mode            string     `json:"mode,omitempty"` // launch | resume
 	Args            []string   `json:"args,omitempty"` // redacted argv
@@ -51,6 +54,15 @@ type State struct {
 	Adopted         bool       `json:"adopted,omitempty"`        // started outside codexfleet; no supervisor
 	AdoptedResult   string     `json:"adopted_result,omitempty"` // last-message file of an adopted run
 	LastError       string     `json:"last_error,omitempty"`
+}
+
+// PID is the task's main pid: the supervisor's, or for an adopted run (no
+// supervisor) codex's.
+func (s *State) PID() int {
+	if s.SupervisorPID > 0 {
+		return s.SupervisorPID
+	}
+	return s.CodexPID
 }
 
 func statePath(taskDir string) string { return filepath.Join(taskDir, "state.json") }

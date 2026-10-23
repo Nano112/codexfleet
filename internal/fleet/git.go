@@ -45,19 +45,29 @@ func revCount(dir, rng string) int {
 
 // dirtyCounts returns (tracked changes, untracked files) in a worktree.
 func dirtyCounts(dir string) (int, int) {
+	t, u, _ := dirtyStatus(dir)
+	return t, u
+}
+
+// dirtyStatus returns the counts and the porcelain lines (tracked first).
+func dirtyStatus(dir string) (int, int, []string) {
 	s, err := git(dir, "status", "--porcelain")
 	if err != nil {
-		return -1, -1
+		return -1, -1, nil
 	}
-	tracked, untracked := 0, 0
+	return parsePorcelain(s)
+}
+
+func parsePorcelain(s string) (int, int, []string) {
+	var tracked, untracked []string
 	for _, l := range strings.Split(s, "\n") {
 		switch {
-		case l == "":
+		case strings.TrimSpace(l) == "":
 		case strings.HasPrefix(l, "??"):
-			untracked++
+			untracked = append(untracked, l)
 		default:
-			tracked++
+			tracked = append(tracked, l)
 		}
 	}
-	return tracked, untracked
+	return len(tracked), len(untracked), append(append([]string{}, tracked...), untracked...)
 }

@@ -35,6 +35,8 @@ func (f *Fleet) Stop(name string, grace time.Duration) error {
 	}
 	tree := f.tree(st)
 	signalTree(st, tree, syscall.SIGTERM)
+	// A paused (SIGSTOPped) tree only acts on SIGTERM once continued.
+	signalTree(st, tree, syscall.SIGCONT)
 	deadline := time.Now().Add(grace)
 	for time.Now().Before(deadline) && Alive(st) {
 		time.Sleep(100 * time.Millisecond)
@@ -57,12 +59,13 @@ func (f *Fleet) Stop(name string, grace time.Duration) error {
 		if s.Status == StatusRunning || s.Status == StatusStarting {
 			s.Status, s.EndedAt = StatusStopped, now()
 		}
+		s.Paused = false
 		return nil
 	})
 	if Alive(st) {
-		return fmt.Errorf("%s: processes still alive after SIGKILL (pid %d)", name, st.SupervisorPID)
+		return fmt.Errorf("%s: processes still alive after SIGKILL (pid %d)", name, st.PID())
 	}
-	f.printf("%-12s stopped (pid %d)\n", name, st.SupervisorPID)
+	f.printf("%-12s stopped (pid %d)\n", name, st.PID())
 	return nil
 }
 

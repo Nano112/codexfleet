@@ -38,6 +38,25 @@ type TaskStatus struct {
 	LastEvent  string          `json:"last_event,omitempty"`
 	Error      string          `json:"error,omitempty"`
 	Stream     *events.Summary `json:"stream,omitempty"`
+	Tokens     *events.Usage   `json:"tokens,omitempty"` // session total from Codex's rollout (live), else summed turn.completed usage
+	Activity   string          `json:"activity,omitempty"`
+	Heavy      []ProcInfo      `json:"heavy,omitempty"`  // heavy processes it owns (snapshot only)
+	Detail     *TaskDetail     `json:"detail,omitempty"` // with --detail / snapshot
+}
+
+// TaskDetail is what a dashboard shows for a selected task.
+type TaskDetail struct {
+	Recent       []events.Entry `json:"recent"`        // last readable events, oldest first
+	Commits      []string       `json:"commits"`       // newest first: "sha subject (age)"
+	DirtyFiles   []string       `json:"dirty_files"`   // git status --porcelain lines
+	FinalMessage string         `json:"final_message"` // -o last-message file, else the last agent message (when exited)
+}
+
+// StatusOptions controls how much Status computes.
+type StatusOptions struct {
+	Detail      bool // fill TaskDetail
+	EventsLimit int  // recent events per task with Detail (default 8)
+	CommitLimit int  // commits per task with Detail (default 10)
 }
 
 // FleetStatus is the whole `status --json` document.
@@ -46,6 +65,7 @@ type FleetStatus struct {
 	MaxConcurrent  int          `json:"max_concurrent"`
 	Running        int          `json:"running"`
 	Queued         int          `json:"queued"`
+	Paused         int          `json:"paused,omitempty"`
 	AvailableRAMGB float64      `json:"available_ram_gb"`
 	Time           time.Time    `json:"time"`
 	Tasks          []TaskStatus `json:"tasks"`
@@ -53,6 +73,10 @@ type FleetStatus struct {
 
 // TaskStatusOf computes a task's live status.
 func (f *Fleet) TaskStatusOf(name string) (TaskStatus, error) {
+	return f.taskStatus(name, StatusOptions{})
+}
+
+func (f *Fleet) taskStatus(name string, o StatusOptions) (TaskStatus, error) {
 	st, err := f.State(name)
 	if err != nil {
 		return TaskStatus{}, err
@@ -62,7 +86,7 @@ func (f *Fleet) TaskStatusOf(name string) (TaskStatus, error) {
 		BaseSHA: st.BaseSHA, SessionID: st.SessionID, Runs: st.Runs, StartedAt: st.StartedAt,
 		EndedAt: st.EndedAt, ExitCode: st.ExitCode, Signal: st.Signal, Error: st.LastError, Commits: -1, Dirty: -1, Untracked: -1}
 	if alive {
-		ts.PID, ts.CodexPID = st.SupervisorPID, st.CodexPID
+		ts.PID, ts.CodexPID = st.PID(), st.CodexPID
 	}
 	if r, err := f.Cfg.Resolve(name); err == nil {
 		if ts.Branch == "" {
@@ -88,8 +112,30 @@ func (f *Fleet) TaskStatusOf(name string) (TaskStatus, error) {
 		ts.HasResult = true
 	}
 	if eff != StatusPending && eff != StatusQueued {
-		if sum, err := events.Summarize(files.Events); err == nil {
+		n := 0
+		if o.Detail {
+			n = o.EventsLimit
+			if n <= 0 {
+				n = 8
+			}
+		}
+		if sum, recent, err := events.Analyze(files.Events, n); err == nil {
 			ts.Stream = &sum
+			if o.Detail {
+				ts.Detail = &TaskDetail{Recent: recent, Commits: []string{}, DirtyFiles: []string{}}
+				if !alive {
+					for i := range ts.Detail.Recent {
+						if ts.Detail.Recent[i].Kind == "running" {
+							ts.Detail.Recent[i].Kind = "interrupted"
+						}
+					}
+				}
+				if b, err := os.ReadFile(files.LastMessage); err == nil && len(b) > 0 {
+					ts.Detail.FinalMessage = clipRunes(strings.TrimSpace(string(b)), 4000)
+				} else if !alive {
+					ts.Detail.FinalMessage = clipRunes(strings.TrimSpace(sum.LastAgentMessage), 4000)
+				}
+			}
 			ts.LastEvent = sum.LastEvent
 			if !alive && strings.HasSuffix(ts.LastEvent, " (running)") {
 				ts.LastEvent = strings.TrimSuffix(ts.LastEvent, " (running)") + " (interrupted)"
@@ -100,6 +146,11 @@ func (f *Fleet) TaskStatusOf(name string) (TaskStatus, error) {
 			if ts.Error == "" && sum.Error != "" {
 				ts.Error = sum.Error
 			}
+			ts.Activity = sum.Activity
+			ts.Tokens = sum.Tokens
+			if u := events.SessionTokens(events.CodexHome(), ts.SessionID); u != nil {
+				ts.Tokens = u
+			}
 		}
 	}
 	if _, err := os.Stat(ts.Worktree); err == nil && eff != StatusCleaned {
@@ -108,13 +159,43 @@ func (f *Fleet) TaskStatusOf(name string) (TaskStatus, error) {
 			base = f.Cfg.Base
 		}
 		ts.Commits = revCount(ts.Worktree, base+"..HEAD")
-		ts.Dirty, ts.Untracked = dirtyCounts(ts.Worktree)
+		var porcelain []string
+		ts.Dirty, ts.Untracked, porcelain = dirtyStatus(ts.Worktree)
+		if ts.Detail != nil {
+			lim := o.CommitLimit
+			if lim <= 0 {
+				lim = 10
+			}
+			if out, err := git(ts.Worktree, "log", fmt.Sprintf("-%d", lim), "--format=%h %s (%ar)", base+"..HEAD"); err == nil && out != "" {
+				ts.Detail.Commits = strings.Split(out, "\n")
+			}
+			if len(porcelain) > 50 {
+				porcelain = append(porcelain[:50], fmt.Sprintf("… %d more", len(porcelain)-50))
+			}
+			ts.Detail.DirtyFiles = porcelain
+		}
+	}
+	if o.Detail && ts.Detail == nil {
+		ts.Detail = &TaskDetail{Recent: []events.Entry{}, Commits: []string{}, DirtyFiles: []string{}}
 	}
 	return ts, nil
 }
 
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
+
 // Status computes the status of the named tasks (all when empty).
 func (f *Fleet) Status(names []string) (*FleetStatus, error) {
+	return f.StatusWith(names, StatusOptions{})
+}
+
+// StatusWith is Status with options (per-task detail).
+func (f *Fleet) StatusWith(names []string, o StatusOptions) (*FleetStatus, error) {
 	if len(names) == 0 {
 		names = f.Cfg.TaskNames()
 	}
@@ -126,12 +207,15 @@ func (f *Fleet) Status(names []string) (*FleetStatus, error) {
 		if _, err := f.Cfg.Task(n); err != nil {
 			return nil, err
 		}
-		ts, err := f.TaskStatusOf(n)
+		ts, err := f.taskStatus(n, o)
 		if err != nil {
 			return nil, err
 		}
 		if ts.Alive {
 			fs.Running++
+		}
+		if ts.Status == StatusPaused {
+			fs.Paused++
 		}
 		if ts.Status == StatusQueued {
 			fs.Queued++

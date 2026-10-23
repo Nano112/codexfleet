@@ -69,6 +69,7 @@ func Supervise(stdin io.Reader) error {
 	cstart, _ := sysinfo.StartTime(cpid)
 	upd(func(s *State) {
 		s.Status = StatusRunning
+		s.Paused = false
 		s.SupervisorPID, s.SupervisorStart = selfPID, selfStart
 		s.CodexPID, s.CodexStart = cpid, cstart
 	})

@@ -125,6 +125,9 @@ func (f *Fleet) Watch(o WatchOptions) ([]Wake, error) {
 				delete(watched, n)
 				continue
 			}
+			if cur, err := f.State(n); err == nil && cur.Paused {
+				continue // paused on purpose: not idle
+			}
 			fi, err := os.Stat(f.TaskFiles(n).Events)
 			if err != nil {
 				continue
@@ -144,7 +147,11 @@ func (f *Fleet) Watch(o WatchOptions) ([]Wake, error) {
 				if b, err := json.Marshal(memo); err == nil {
 					WriteFileAtomic(memoPath, b, 0o600)
 				}
-				found = append(found, Wake{Reason: "LOWMEM", Detail: fmt.Sprintf("%.1fG<%.1fG", gb, o.MinRAMGB)})
+				detail := fmt.Sprintf("%.1fG<%.1fG", gb, o.MinRAMGB)
+				if top := MachineReport(f.taskRoots(), 3).TopSummary(3); top != "" {
+					detail += "; top: " + top
+				}
+				found = append(found, Wake{Reason: "LOWMEM", Detail: detail})
 			}
 		}
 		if len(found) > 0 {
