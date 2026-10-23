@@ -74,6 +74,15 @@ fi
 #    local checkout: no extra credentials, and `git pull` + /reload-plugins updates it.
 if [ "${NO_PLUGIN:-}" != 1 ]; then
   if have claude; then
+    # The marketplace is a folder source: point it at this checkout. One left
+    # pointing at another checkout (say the managed one, when this script runs
+    # from a clone) would keep loading that checkout's older plugin.
+    registered=$(claude plugin marketplace list 2>/dev/null | awk '/❯ codexfleet$/ {f=1; next} f && /Source:/ {print; exit}' |
+      sed -n 's/.*Folder (\(.*\)).*/\1/p')
+    if [ -n "$registered" ] && [ "$registered" != "$SRC" ]; then
+      say "re-pointing the codexfleet marketplace from $registered to $SRC"
+      claude plugin marketplace remove codexfleet >/dev/null 2>&1 || true
+    fi
     claude plugin marketplace add "$SRC" >/dev/null 2>&1 || claude plugin marketplace update codexfleet >/dev/null 2>&1 || true
     if claude plugin install codexfleet@codexfleet >/dev/null 2>&1 || claude plugin list 2>/dev/null | grep -q codexfleet; then
       say "Claude Code plugin installed (codexfleet@codexfleet; run /reload-plugins in open sessions)"
