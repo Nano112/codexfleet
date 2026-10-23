@@ -547,7 +547,10 @@ func Describe(e Event, o LogOptions) (Entry, bool) {
 			case "mcp_tool_call":
 				en.Line = it.Server + "." + it.Tool
 				if it.Status == "failed" {
-					en.Line += " failed: " + clip(errorMessage(it.Error), 200)
+					en.Line += " failed"
+					if msg := errorMessage(it.Error); msg != "" && msg != "null" {
+						en.Line += ": " + clip(msg, 200)
+					}
 				}
 			case "agent_message":
 				en.Line = clip(it.Text, 400)
