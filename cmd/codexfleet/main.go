@@ -38,7 +38,8 @@ Usage: codexfleet <command> [flags] [args]
 
 Setup
   init [DIR] [--force]          scaffold codexfleet.toml + prompts/agent.md
-  doctor [--json]               check codex, login, git, MCP commands, disk, RAM
+  doctor [--json] [--commit]    check codex, login, git, MCP commands, disk, RAM
+                                (--commit: agents can git commit in the sandbox)
   render TASK...                show the exact codex command (secrets redacted)
 
 Run
@@ -238,6 +239,8 @@ func cmdDoctor(args []string, out io.Writer) (bool, error) {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	file := fs.String("f", "", "fleet file")
 	asJSON := fs.Bool("json", false, "JSON output")
+	commit := fs.Bool("commit", false, "also check, in a throwaway worktree, that an agent can git add/commit inside the Codex sandbox")
+	task := fs.String("task", "", "task whose settings --commit uses (default: the first task)")
 	if _, err := parse(fs, args); err != nil {
 		return false, err
 	}
@@ -252,6 +255,12 @@ func cmdDoctor(args []string, out io.Writer) (bool, error) {
 		return true, err
 	}
 	cs := fleet.Doctor(cfg)
+	if *commit {
+		if cfg == nil {
+			return true, usageError{fmt.Errorf("--commit needs a fleet file")}
+		}
+		cs = append(cs, fleet.CommitCheck(cfg, *task))
+	}
 	if *asJSON {
 		failed := false
 		for _, c := range cs {

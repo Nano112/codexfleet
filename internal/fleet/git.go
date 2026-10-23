@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -32,6 +33,35 @@ func gitOK(dir string, args ...string) bool {
 // write their objects and refs there, so Codex must be allowed to write it.
 func gitCommonDir(repo string) (string, error) {
 	return git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+}
+
+// taskGitDirs are the git directories a task's sandbox must be able to write:
+// the repository's common git dir (objects, refs) and, for a linked worktree,
+// the worktree's own git dir (<common>/worktrees/<name>: index, HEAD).
+//
+// The worktree git dir must be named explicitly. Codex's Linux sandbox
+// protects every writable root's .git; for a worktree it follows the .git
+// file and ro-binds the git dir it points to. Writable roots are mounted
+// shallowest first, so when the worktree is deeper than <common> that ro-bind
+// lands on top of the writable <common> bind and `git add` cannot create
+// index.lock. A writable root for the git dir itself lifts the protection
+// whatever the depths. It is already inside <common>, so nothing is widened.
+func taskGitDirs(repo, worktree string) []string {
+	common, err := gitCommonDir(repo)
+	if err != nil {
+		// render/--dry-run on a repo that is not there yet; launch validates the repo first.
+		common = filepath.Join(repo, ".git")
+	}
+	dirs := []string{common}
+	wgd, err := git(worktree, "rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil || !filepath.IsAbs(wgd) {
+		// Not created yet (render): git names it after the worktree directory.
+		wgd = filepath.Join(common, "worktrees", filepath.Base(worktree))
+	}
+	if filepath.Clean(wgd) != filepath.Clean(common) {
+		dirs = append(dirs, wgd)
+	}
+	return dirs
 }
 
 func revCount(dir, rng string) int {

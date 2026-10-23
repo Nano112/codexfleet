@@ -5,6 +5,10 @@
 #   FAKE_CODEX_SLEEP  seconds to sleep mid-run (default 0)
 #   FAKE_CODEX_EXIT   exit status (default 0)
 #   FAKE_CODEX_ARGS   if set, append argv (one per line) to this file
+# Like the real Linux sandbox, a linked worktree's own git dir
+# (<repo>/.git/worktrees/<name>) is read-only unless it is itself a writable
+# root (--add-dir, or a "write" entry of a `sandbox -P` permissions profile):
+# git then fails to create index.lock. `sandbox` runs the command after --.
 case "$1" in
   --version) echo "codex-cli 0.0.0-fake"; exit 0 ;;
   login) echo "Logged in using ChatGPT"; exit 0 ;;
@@ -12,13 +16,39 @@ case "$1" in
     if [ -n "$FAKE_CODEX_ARGS" ]; then { echo "---"; for a in "$@"; do printf '%s\n' "$a"; done; } >> "$FAKE_CODEX_ARGS"; fi
     echo "Queued message for thread $3"; exit 0 ;;
 esac
+# gitdir_writable DIR ROOTS: is DIR's git dir writable given newline-separated writable roots?
+gitdir_writable() {
+  gd=$(git -C "$1" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 0
+  cd_=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  [ "$gd" = "$cd_" ] && return 0
+  printf '%s\n' "$2" | grep -qxF "$gd"
+}
+if [ "$1" = sandbox ]; then
+  shift; dir=$PWD; roots=""
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do
+    case "$1" in
+      -C) dir=$2; shift ;;
+      -c) roots=$(printf '%s\n' "$2" | grep -o '"/[^"]*"="write"' | sed 's/^"//; s/"="write"$//') ; shift ;;
+    esac
+    shift
+  done
+  shift
+  cd "$dir" || exit 1
+  if ! gitdir_writable "$dir" "$roots"; then
+    echo "fatal: Unable to create '$(git rev-parse --path-format=absolute --git-dir)/index.lock': Read-only file system" >&2
+    exit 128
+  fi
+  exec "$@"
+fi
 [ "$1" = exec ] || { echo "fake codex: unsupported: $*" >&2; exit 2; }
 if [ -n "$FAKE_CODEX_ARGS" ]; then
   { echo "---"; for a in "$@"; do printf '%s\n' "$a"; done; } >> "$FAKE_CODEX_ARGS"
 fi
-out=""; mode=launch; tid="01a165ed-ebf2-7081-874b-7c67033abdf5"; prev=""
+out=""; mode=launch; tid="01a165ed-ebf2-7081-874b-7c67033abdf5"; prev=""; roots=""
 for a in "$@"; do
   [ "$prev" = "-o" ] && out="$a"
+  [ "$prev" = "--add-dir" ] && roots="$roots
+$a"
   [ "$prev" = "resume" ] && { mode=resume; tid="$a"; }
   prev="$a"
 done
@@ -34,8 +64,12 @@ if [ "${FAKE_CODEX_SLEEP:-0}" != 0 ]; then sleep "$FAKE_CODEX_SLEEP"; fi
 printf '%s\n' '{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/usr/bin/bash -lc '"'"'echo $CARGO_TARGET_DIR'"'"'","aggregated_output":"'"${CARGO_TARGET_DIR:-unset}"'\n","exit_code":0,"status":"completed"}}'
 n=$(ls fake-*.txt 2>/dev/null | wc -l | tr -d ' ')
 echo "$mode $n" > "fake-$mode-$n.txt"
-git add "fake-$mode-$n.txt" >/dev/null 2>&1 && git commit -q -m "fake $mode $n" >/dev/null 2>&1
-printf '%s\n' '{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"/usr/bin/bash -lc \"git commit -m fake\"","aggregated_output":"[codex/'"$task"' 25fb623] fake\n 1 file changed\n","exit_code":0,"status":"completed"}}'
+if gitdir_writable "$PWD" "$roots"; then
+  git add "fake-$mode-$n.txt" >/dev/null 2>&1 && git commit -q -m "fake $mode $n" >/dev/null 2>&1
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"/usr/bin/bash -lc \"git commit -m fake\"","aggregated_output":"[codex/'"$task"' 25fb623] fake\n 1 file changed\n","exit_code":0,"status":"completed"}}'
+else
+  printf '%s\n' '{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"/usr/bin/bash -lc \"git commit -m fake\"","aggregated_output":"fatal: Unable to create index.lock: Read-only file system\n","exit_code":128,"status":"failed"}}'
+fi
 printf '%s\n' '{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"Done ('"$mode"'). Commit created on codex/'"$task"'."}}'
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1176093,"cached_input_tokens":1130624,"cache_write_input_tokens":0,"output_tokens":2029,"reasoning_output_tokens":310}}'
 [ -n "$out" ] && printf 'Done (%s). Commit created on codex/%s.\n' "$mode" "$task" > "$out"

@@ -31,8 +31,9 @@ Codex must be installed and logged in (`codex login`). codexfleet never edits
 
 ## Workflow
 
-1. **Doctor.** Run `codexfleet doctor` in the repo. Fix every FAIL before you go
-   on (codex login, MCP command paths, base ref).
+1. **Doctor.** Run `codexfleet doctor --commit` in the repo. Fix every FAIL
+   before you go on (codex login, MCP command paths, base ref, agents able to
+   `git commit` inside the sandbox).
 2. **Write the fleet file.** Start from `codexfleet init`, which writes
    `codexfleet.toml` and `prompts/agent.md`, then fill it in from the user's
    request:

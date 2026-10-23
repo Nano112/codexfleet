@@ -290,12 +290,7 @@ func (f *Fleet) prepare(name string) (*config.Resolved, string, error) {
 }
 
 func (f *Fleet) buildArgs(r *config.Resolved, mode, sid, msg, lastMsg string) ([]string, error) {
-	gitDir, err := gitCommonDir(f.Cfg.Repo)
-	if err != nil {
-		// render/--dry-run on a repo that is not there yet; launch validates the repo first.
-		gitDir = filepath.Join(f.Cfg.Repo, ".git")
-	}
-	args, err := r.CommonArgs(gitDir)
+	args, err := r.CommonArgs(taskGitDirs(f.Cfg.Repo, r.Worktree)...)
 	if err != nil {
 		return nil, err
 	}

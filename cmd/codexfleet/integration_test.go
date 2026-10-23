@@ -146,6 +146,14 @@ FAKE_CODEX_SLEEP = "300"
 	if out, code := cli("doctor"); code != 0 || !strings.Contains(out, "codex-cli 0.0.0-fake") {
 		t.Fatalf("doctor (%d): %s", code, out)
 	}
+	// doctor --commit: a throwaway worktree can git add/commit inside the
+	// (fake) sandbox with launch's writable roots, and is removed afterwards.
+	if out, code := cli("doctor", "--commit", "--task", "beta"); code != 0 || !strings.Contains(out, "ok    sandbox commit   task beta: git add/commit work") {
+		t.Fatalf("doctor --commit (%d): %s", code, out)
+	}
+	if out, _ := exec.Command("git", "-C", repo, "worktree", "list").CombinedOutput(); strings.Contains(string(out), "doctor") {
+		t.Fatalf("doctor --commit left its worktree behind:\n%s", out)
+	}
 	if out, _ := cli("render", "alpha"); strings.Contains(out, "hunter2") || !strings.Contains(out, "mcp_servers.analyzer.env=<redacted>") {
 		t.Fatalf("render must redact secrets:\n%s", out)
 	}
@@ -191,7 +199,10 @@ FAKE_CODEX_SLEEP = "300"
 		t.Fatalf("result: %s", out)
 	}
 	argv, _ := os.ReadFile(argsLog)
-	for _, want := range []string{"--add-dir\n" + filepath.Join(root, "locks"), "repo/.git", `mcp_servers.analyzer.default_tools_approval_mode="approve"`, "-m\ngpt-fake"} {
+	// The worktree's own git dir is a writable root (else the sandbox
+	// ro-binds it and git cannot create index.lock; the fake enforces this,
+	// so the commits == 1 checks above depend on it).
+	for _, want := range []string{"--add-dir\n" + filepath.Join(root, "locks"), "repo/.git", filepath.Join("repo", ".git", "worktrees", "alpha") + "\n", `mcp_servers.analyzer.default_tools_approval_mode="approve"`, "-m\ngpt-fake"} {
 		if !strings.Contains(string(argv), want) {
 			t.Fatalf("codex argv missing %q:\n%s", want, argv)
 		}

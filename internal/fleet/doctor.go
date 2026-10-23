@@ -44,13 +44,7 @@ func Doctor(cfg *config.Config) []Check {
 	var cs []Check
 	add := func(level, name, f string, a ...any) { cs = append(cs, Check{level, name, fmt.Sprintf(f, a...)}) }
 
-	bin := "codex"
-	if cfg != nil {
-		bin = config.ExpandHome(cfg.Codex.Bin)
-		if strings.ContainsRune(bin, '/') && !filepath.IsAbs(bin) {
-			bin = filepath.Join(cfg.Dir, bin)
-		}
-	}
+	bin := configCodexBin(cfg)
 	if p, err := exec.LookPath(bin); err != nil {
 		add("fail", "codex", "%q not found (install the Codex CLI, or set codex.bin)", bin)
 	} else {

@@ -95,7 +95,7 @@ codexfleet clean TASK
 | Command | |
 |---|---|
 | `init [DIR] [--force]` | scaffold `codexfleet.toml` and `prompts/agent.md` |
-| `doctor [--json]` | codex found and logged in, git, flock, MCP commands and paths, URL servers answering (and their token variables), base ref, tasks render, disk, RAM |
+| `doctor [--json] [--commit [--task T]]` | codex found and logged in, git, flock, MCP commands and paths, URL servers answering (and their token variables), base ref, tasks render, disk, RAM; `--commit` also commits in a throwaway worktree through `codex sandbox` with launch's writable roots (no model call) |
 | `render TASK...` | print the exact `codex exec` command (MCP env and long texts redacted) |
 | `launch TASK...\|--all [--fill] [--restart] [--dry-run]` | create worktrees and start agents. Tasks beyond `max_concurrent` are `queued`. `--fill` starts queued tasks while slots are free. |
 | `watch [--fill] [--idle M] [--ram GB] [--timeout D] [--poll D] [--json] [TASK...]` | block until a task exits (`EXITED`), goes idle (`IDLE`), or RAM drops (`LOWMEM`); print `WAKE …` lines and the status table. Exits since the last watch are reported at once. Each idle/low-memory episode is reported once. |
@@ -158,7 +158,7 @@ branch_prefix = "codex/"    # branch = <prefix><task>
 prompt_template = "prompts/agent.md"
 max_concurrent = 4
 mkdirs = ["{{build}}"]      # created before launch
-add_dirs = ["{{build}}"]    # extra --add-dir; the repo's git common dir is always added
+add_dirs = ["{{build}}"]    # extra --add-dir; the repo's git common dir and the worktree's git dir are always added
 
 [codex]
 bin = "codex"               # name on PATH or a path

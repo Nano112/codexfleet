@@ -8,11 +8,15 @@ var commandHelp = map[string]string{
 Write codexfleet.toml and prompts/agent.md in DIR (default: the current
 directory). Existing files are kept unless --force.
 `,
-	"doctor": `Usage: codexfleet doctor [--json]
+	"doctor": `Usage: codexfleet doctor [--json] [--commit [--task TASK]]
 
 Check the codex binary and its login, git, flock, every MCP server's command
 and paths (or, for a url server, that it answers and its token variable is
 set), the base ref, that every task's prompt renders, disk and RAM.
+
+--commit also makes a throwaway worktree next to TASK's (default: the first
+task), runs git add and git commit in it through ` + "`codex sandbox`" + ` with the
+writable roots launch would pass, and removes it. No model call is made.
 Exits 1 when a check fails.
 `,
 	"render": `Usage: codexfleet render TASK...
