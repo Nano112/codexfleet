@@ -52,9 +52,16 @@ Run
                                 track a Codex run started outside codexfleet (git untouched)
   note TASK "message"           message a RUNNING agent without restarting it (codex queue)
   resume TASK "message"         continue an EXITED session, same flags (--file F for long text)
+  pause TASK... / unpause TASK...
+                                SIGSTOP / SIGCONT a task's process tree: stops growth in a
+                                memory emergency but frees nothing (stop + resume frees)
 
 Inspect
-  status [--json] [TASK...]     table, or JSON for scripts and Claude
+  status [--json [--detail]] [TASK...]
+                                table, or JSON for scripts and Claude
+  top [--interval D] [--once]   full-screen dashboard of every live fleet (or -f FILE)
+  snapshot [--events N]         JSON of everything a dashboard draws: tasks, recent
+                                events, tokens, MCP counts, memory and heavy processes
   fleets [--json] [--live]      fleets here (cwd, $CODEXFLEET_FILE) and registered by launch/adopt
   logs TASK [--tail N] [--full] [--run N] [--raw] [--file JSONL]
   result TASK                   final message, outcome and commits
@@ -69,7 +76,8 @@ Agents
   lock FILE -- CMD...           run CMD holding an exclusive lock (portable flock)
 
 Every command accepts -f FILE (or $CODEXFLEET_FILE); otherwise codexfleet.toml is
-searched for upward from the current directory.
+searched for upward from the current directory. ` + "`codexfleet help CMD`" + ` or
+` + "`codexfleet CMD --help`" + ` describes one command.
 `
 
 func main() {
@@ -78,20 +86,24 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	// A leading -f FILE (or --file FILE / -f=FILE) applies to every command.
+	leadingFile = ""
 	for len(args) > 0 {
 		a := args[0]
 		if (a == "-f" || a == "--file") && len(args) > 1 {
-			os.Setenv("CODEXFLEET_FILE", args[1])
+			leadingFile = args[1]
 			args = args[2:]
 		} else if v, ok := strings.CutPrefix(a, "-f="); ok {
-			os.Setenv("CODEXFLEET_FILE", v)
+			leadingFile = v
 			args = args[1:]
 		} else if v, ok := strings.CutPrefix(a, "--file="); ok {
-			os.Setenv("CODEXFLEET_FILE", v)
+			leadingFile = v
 			args = args[1:]
 		} else {
 			break
 		}
+	}
+	if leadingFile != "" {
+		os.Setenv("CODEXFLEET_FILE", leadingFile)
 	}
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
@@ -101,6 +113,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var err error
 	switch cmd {
 	case "-h", "--help", "help":
+		if len(rest) > 0 && cmd == "help" {
+			if _, ok := commandHelp[rest[0]]; ok {
+				return run([]string{rest[0], "--help"}, stdout, stderr)
+			}
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "-v", "--version", "version":
@@ -113,7 +130,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	case "lock":
+		if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help") {
+			fmt.Fprint(stdout, commandHelp["lock"])
+			return 0
+		}
 		return cmdLock(rest, stderr)
+	case "top":
+		err = cmdTop(rest, stdout)
+	case "snapshot":
+		err = cmdSnapshot(rest, stdout)
 	case "init":
 		err = cmdInit(rest, stdout)
 	case "fleets":
@@ -124,13 +149,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if err == nil && failed {
 			return 1
 		}
-	case "launch", "status", "watch", "stop", "resume", "note", "adopt", "logs", "result", "commits", "diff", "clean", "render":
+	case "launch", "status", "watch", "stop", "resume", "note", "adopt", "logs", "result", "commits", "diff", "clean", "render", "pause", "unpause":
 		err = withFleet(cmd, rest, stdout)
 	default:
 		fmt.Fprintf(stderr, "codexfleet: unknown command %q\n\n%s", cmd, usage)
 		return 2
 	}
 	if err != nil {
+		var he helpRequest
+		if errors.As(err, &he) {
+			fmt.Fprint(stdout, commandHelp[he.cmd])
+			if he.fs != nil {
+				fmt.Fprintln(stdout, "\nFlags:")
+				he.fs.SetOutput(stdout)
+				he.fs.PrintDefaults()
+			}
+			return 0
+		}
 		var ue usageError
 		if errors.As(err, &ue) {
 			fmt.Fprintf(stderr, "codexfleet %s: %v\n", cmd, err)
@@ -144,12 +179,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 type usageError struct{ error }
 
+// helpRequest is -h/--help on a subcommand: print its usage, exit 0.
+type helpRequest struct {
+	cmd string
+	fs  *flag.FlagSet
+}
+
+func (h helpRequest) Error() string { return "help requested" }
+
+// leadingFile is a -f FILE given before the command.
+var leadingFile string
+
 // parse handles flags and positionals in any order.
 func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	fs.SetOutput(io.Discard)
 	var pos []string
 	for {
 		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil, helpRequest{fs.Name(), fs}
+			}
 			return nil, usageError{err}
 		}
 		args = fs.Args()
@@ -240,7 +289,7 @@ func withFleet(cmd string, args []string, out io.Writer) error {
 		idle, ram                                                      *float64
 		timeout, poll, grace                                           *time.Duration
 		msgFile, logFile, manifest                                     *string
-		adoptForce                                                     *bool
+		adoptForce, detail                                             *bool
 		row                                                            adoptRow
 	)
 	switch cmd {
@@ -251,6 +300,7 @@ func withFleet(cmd string, args []string, out io.Writer) error {
 		dry = fs.Bool("dry-run", false, "print commands only")
 	case "status":
 		asJSON = fs.Bool("json", false, "JSON output")
+		detail = fs.Bool("detail", false, "with --json: per-task recent events, commits, dirty files, final message")
 	case "watch":
 		fill = fs.Bool("fill", false, "start queued tasks as slots free up")
 		idle = fs.Float64("idle", 0, "idle minutes threshold")
@@ -314,8 +364,26 @@ func withFleet(cmd string, args []string, out io.Writer) error {
 			return err
 		}
 		return f.Launch(pos, fleet.LaunchOptions{DryRun: true})
+	case "pause", "unpause":
+		if err := need(1, "TASK"); err != nil {
+			return err
+		}
+		var errs []string
+		for _, n := range pos {
+			op := f.Pause
+			if cmd == "unpause" {
+				op = f.Unpause
+			}
+			if err := op(n); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "\n"))
+		}
+		return nil
 	case "status":
-		st, err := f.Status(pos)
+		st, err := f.StatusWith(pos, fleet.StatusOptions{Detail: *detail})
 		if err != nil {
 			return err
 		}

@@ -152,12 +152,28 @@ func cmdFleets(args []string, out io.Writer) error {
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
-	// Current fleets, in discovery order: -f, the cwd and its parents, $CODEXFLEET_FILE.
+	current, err := currentFleets(*file)
+	if err != nil {
+		return err
+	}
+	list := fleet.ListFleets(current, *live)
+	if *asJSON {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]any{"registry": fleet.RegistryPath(), "fleets": list})
+	}
+	fleet.WriteFleetsTable(out, list)
+	return nil
+}
+
+// currentFleets are the fleet files found here, in discovery order: file (-f),
+// the cwd and its parents, $CODEXFLEET_FILE.
+func currentFleets(file string) ([]string, error) {
 	var current []string
-	if *file != "" {
-		p, err := config.Find(*file)
+	if file != "" {
+		p, err := config.Find(file)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		current = append(current, p)
 	}
@@ -176,12 +192,5 @@ func cmdFleets(args []string, out io.Writer) error {
 			}
 		}
 	}
-	list := fleet.ListFleets(current, *live)
-	if *asJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{"registry": fleet.RegistryPath(), "fleets": list})
-	}
-	fleet.WriteFleetsTable(out, list)
-	return nil
+	return current, nil
 }

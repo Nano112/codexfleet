@@ -96,7 +96,7 @@ FAKE_CODEX_SLEEP = "300"
 	os.WriteFile(filepath.Join(root, "prompt.md"), []byte("Task {{task}}: {{scope}}\nWorktree {{worktree}} branch {{branch}}\nLock {{lock.heavy}}\n"), 0o644)
 
 	env := append(os.Environ(), "CODEXFLEET_FILE="+filepath.Join(root, "codexfleet.toml"),
-		"CODEXFLEET_IT_SECRET=hunter2-secret", "FAKE_CODEX_ARGS="+argsLog, "CODEXFLEET_REGISTRY="+filepath.Join(root, "registry.json"),
+		"CODEXFLEET_IT_SECRET=hunter2-secret", "FAKE_CODEX_ARGS="+argsLog, "CODEXFLEET_REGISTRY="+filepath.Join(root, "registry.json"), "CODEX_HOME="+filepath.Join(root, "codex-home"),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 	cli := func(args ...string) (string, int) {
 		cmd := exec.Command(bin, args...)
@@ -127,6 +127,20 @@ FAKE_CODEX_SLEEP = "300"
 			m[ts["task"].(string)] = ts
 		}
 		return m
+	}
+
+	// Every subcommand has real --help.
+	for _, c := range []string{"watch", "launch", "stop", "pause", "snapshot", "top", "status", "logs", "adopt", "lock"} {
+		out, code := cli(c, "--help")
+		if code != 0 || !strings.Contains(out, "Usage: codexfleet "+c) || strings.Contains(out, "flag: help requested") {
+			t.Fatalf("%s --help (%d): %s", c, code, out)
+		}
+	}
+	if out, _ := cli("watch", "--help"); !strings.Contains(out, "-timeout") {
+		t.Fatalf("watch --help should list its flags: %s", out)
+	}
+	if out, code := cli("help", "pause"); code != 0 || !strings.Contains(out, "stays allocated") {
+		t.Fatalf("help pause: %s", out)
 	}
 
 	if out, code := cli("doctor"); code != 0 || !strings.Contains(out, "codex-cli 0.0.0-fake") {
@@ -232,6 +246,98 @@ FAKE_CODEX_SLEEP = "300"
 	if st := status(); st["slow"]["status"] != "running" {
 		t.Fatalf("slow not running: %v", st["slow"])
 	}
+	// pause / unpause freeze and continue the tree; paused tasks are reported.
+	if out, code := cli("pause", "slow"); code != 0 || !strings.Contains(out, "paused") || !strings.Contains(out, "not freed") {
+		t.Fatalf("pause: (%d) %s", code, out)
+	}
+	if st := status(); st["slow"]["status"] != "paused" || st["slow"]["alive"] != true {
+		t.Fatalf("after pause: %v", st["slow"])
+	}
+	if out, code := cli("unpause", "slow"); code != 0 || !strings.Contains(out, "unpaused") {
+		t.Fatalf("unpause: (%d) %s", code, out)
+	}
+	if st := status(); st["slow"]["status"] != "running" {
+		t.Fatalf("after unpause: %v", st["slow"])
+	}
+
+	// snapshot --json: everything the plugin pane draws, for -f only.
+	out, code = cli("-f", filepath.Join(root, "codexfleet.toml"), "snapshot", "--json", "--events", "5")
+	if code != 0 {
+		t.Fatalf("snapshot: %s", out)
+	}
+	var snap struct {
+		Machine struct {
+			Available float64 `json:"available_ram_gb"`
+			Total     float64 `json:"total_ram_gb"`
+			Top       []struct {
+				Name string  `json:"name"`
+				GB   float64 `json:"rss_gb"`
+			} `json:"top"`
+		} `json:"machine"`
+		Fleets []struct {
+			Path   string `json:"path"`
+			Status struct {
+				Tasks []struct {
+					Task   string `json:"task"`
+					Status string `json:"status"`
+					PID    int    `json:"pid"`
+					Tokens *struct {
+						In  int64 `json:"input_tokens"`
+						Out int64 `json:"output_tokens"`
+					} `json:"tokens"`
+					Stream *struct {
+						ToolCalls int    `json:"tool_calls"`
+						Commands  int    `json:"commands"`
+						Activity  string `json:"activity"`
+					} `json:"stream"`
+					Detail *struct {
+						Recent []struct {
+							Kind string `json:"kind"`
+							Line string `json:"line"`
+						} `json:"recent"`
+						Commits []string `json:"commits"`
+						Final   string   `json:"final_message"`
+					} `json:"detail"`
+				} `json:"tasks"`
+			} `json:"status"`
+		} `json:"fleets"`
+	}
+	if err := json.Unmarshal([]byte(out), &snap); err != nil {
+		t.Fatalf("snapshot json: %v\n%s", err, out)
+	}
+	if len(snap.Fleets) != 1 || snap.Machine.Total <= 0 || len(snap.Machine.Top) != 3 {
+		t.Fatalf("snapshot shape: %+v", snap)
+	}
+	byTask := map[string]int{}
+	for i, ts := range snap.Fleets[0].Status.Tasks {
+		byTask[ts.Task] = i
+	}
+	alpha := snap.Fleets[0].Status.Tasks[byTask["alpha"]]
+	if alpha.Tokens == nil || alpha.Tokens.Out != 2029 || alpha.Stream == nil || alpha.Stream.ToolCalls != 1 ||
+		alpha.Stream.Activity == "" || alpha.Detail == nil || len(alpha.Detail.Recent) != 5 || len(alpha.Detail.Commits) != 2 ||
+		!strings.Contains(alpha.Detail.Final, "Done (resume)") {
+		t.Fatalf("snapshot alpha: %+v %+v %+v", alpha.Tokens, alpha.Stream, alpha.Detail)
+	}
+	if sl := snap.Fleets[0].Status.Tasks[byTask["slow"]]; sl.Status != "running" || sl.PID == 0 || sl.Detail == nil || len(sl.Detail.Recent) == 0 ||
+		sl.Detail.Recent[len(sl.Detail.Recent)-1].Kind != "running" {
+		t.Fatalf("snapshot slow: %+v", sl)
+	}
+
+	// top --once renders one frame (the integration of snapshot + renderer).
+	out, code = cli("top", "--once", "--width", "90", "--select", "alpha")
+	if code != 0 {
+		t.Fatalf("top --once: %s", out)
+	}
+	for _, want := range []string{"codexfleet top", "RAM ", "TASK", "STATE", "alpha", "slow", "running", "── alpha done", "Recent events", "Commits (", "q quit"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("top --once missing %q:\n%s", want, out)
+		}
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if len([]rune(l)) > 90 {
+			t.Fatalf("top --once line wider than 90: %q", l)
+		}
+	}
 	// note queues a message for the running session; on an exited task it points to resume.
 	os.WriteFile(argsLog, nil, 0o644)
 	if out, code := cli("note", "slow", "skip the memory-heavy tests"); code != 0 || !strings.Contains(out, "note queued") {
@@ -303,8 +409,11 @@ FAKE_CODEX_SLEEP = "300"
 	if code != 0 || !strings.Contains(out, "adopted: running, session 01a165ed") {
 		t.Fatalf("adopt: (%d) %s", code, out)
 	}
-	if st := status(); st["ext"]["status"] != "running" || st["ext"]["alive"] != true {
-		t.Fatalf("adopted status: %v", st["ext"])
+	if st := status(); st["ext"]["status"] != "running" || st["ext"]["alive"] != true || st["ext"]["pid"].(float64) != float64(ext.Process.Pid) {
+		t.Fatalf("adopted status (the pid must be codex's, not 0): %v", st["ext"])
+	}
+	if out, _ := cli("status"); !strings.Contains(out, fmt.Sprint(ext.Process.Pid)) {
+		t.Fatalf("status table should show the adopted pid %d:\n%s", ext.Process.Pid, out)
 	}
 	if out, _ := cli("logs", "ext"); !strings.Contains(out, "[mcp] analyzer.list_symbols") {
 		t.Fatalf("adopted logs: %s", out)
