@@ -169,6 +169,13 @@ func (c *Config) Resolve(name string) (*Resolved, error) {
 			continue
 		}
 		out := s
+		if s.URL != "" {
+			if out.URL, err = v.Render(s.URL); err != nil {
+				return nil, where(err, "mcp_servers.%s.url", name)
+			}
+			r.MCP[name] = out
+			continue
+		}
 		if out.Command, err = v.Render(s.Command); err != nil {
 			return nil, where(err, "mcp_servers.%s.command", name)
 		}
@@ -265,12 +272,19 @@ func (r *Resolved) CommonArgs(extraAddDirs ...string) ([]string, error) {
 	for _, n := range names {
 		s := r.MCP[n]
 		pre := "mcp_servers." + n + "."
-		args = append(args, "-c", pre+"command="+TOMLString(s.Command))
-		argv, _ := TOMLValue(append([]string{}, s.Args...))
-		args = append(args, "-c", pre+"args="+argv)
-		if len(s.Env) > 0 {
-			env, _ := TOMLValue(s.Env)
-			args = append(args, "-c", pre+"env="+env)
+		if s.URL != "" {
+			args = append(args, "-c", pre+"url="+TOMLString(s.URL))
+			if s.BearerTokenEnvVar != "" {
+				args = append(args, "-c", pre+"bearer_token_env_var="+TOMLString(s.BearerTokenEnvVar))
+			}
+		} else {
+			args = append(args, "-c", pre+"command="+TOMLString(s.Command))
+			argv, _ := TOMLValue(append([]string{}, s.Args...))
+			args = append(args, "-c", pre+"args="+argv)
+			if len(s.Env) > 0 {
+				env, _ := TOMLValue(s.Env)
+				args = append(args, "-c", pre+"env="+env)
+			}
 		}
 		if s.StartupTimeoutSec > 0 {
 			args = append(args, "-c", fmt.Sprintf("%sstartup_timeout_sec=%d", pre, s.StartupTimeoutSec))
@@ -349,4 +363,57 @@ func Redact(args []string) []string {
 		}
 	}
 	return out
+}
+
+// SharedServer is a [shared_mcp] entry with its home directory, ${VAR}
+// references and server URL resolved.
+type SharedServer struct {
+	Name            string
+	URL             string
+	HealthURL       string
+	Command         string
+	Args            []string
+	Env             map[string]string
+	BearerTokenEnv  string
+	StartTimeoutSec int
+}
+
+// SharedServers resolves the [shared_mcp] entries behind the named MCP
+// servers (all of them when names is nil), in name order.
+func (c *Config) SharedServers(names []string) ([]SharedServer, error) {
+	if names == nil {
+		for n := range c.SharedMCP {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	var out []SharedServer
+	for _, n := range names {
+		s, ok := c.SharedMCP[n]
+		if !ok {
+			continue
+		}
+		srv := c.MCPServers[n]
+		r := SharedServer{
+			Name:            n,
+			URL:             srv.URL,
+			HealthURL:       s.HealthURL,
+			Command:         ExpandHome(s.Command),
+			BearerTokenEnv:  srv.BearerTokenEnvVar,
+			StartTimeoutSec: s.StartTimeoutSec,
+			Env:             map[string]string{},
+		}
+		for _, a := range s.Args {
+			r.Args = append(r.Args, ExpandHome(a))
+		}
+		for k, val := range s.Env {
+			ev, err := ExpandEnvRefs(val)
+			if err != nil {
+				return nil, fmt.Errorf("shared_mcp.%s.env.%s: %w", n, k, err)
+			}
+			r.Env[k] = ExpandHome(ev)
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }

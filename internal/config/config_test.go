@@ -202,3 +202,72 @@ func TestPositionalText(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestURLServerArgs(t *testing.T) {
+	c := load(t, `
+[mcp_servers.re]
+url = "http://127.0.0.1:47800/mcp"
+bearer_token_env_var = "RE_TOKEN"
+tool_timeout_sec = 1800
+
+[shared_mcp.re]
+command = "node"
+args = ["~/tool/serve.mjs", "--daemon"]
+env = { HEAP = "18G" }
+
+[[tasks]]
+name = "a"
+prompt = "x"
+`)
+	r, err := c.Resolve("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := r.CommonArgs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := strings.Join(args, " ")
+	for _, s := range []string{
+		`mcp_servers.re.url="http://127.0.0.1:47800/mcp"`,
+		`mcp_servers.re.bearer_token_env_var="RE_TOKEN"`,
+		`mcp_servers.re.tool_timeout_sec=1800`,
+		`mcp_servers.re.default_tools_approval_mode="approve"`,
+	} {
+		if !strings.Contains(j, s) {
+			t.Errorf("args missing %q\n%s", s, j)
+		}
+	}
+	if strings.Contains(j, "mcp_servers.re.command") || strings.Contains(j, "mcp_servers.re.args") {
+		t.Errorf("url server must not emit command/args: %s", j)
+	}
+	shared, err := c.SharedServers(nil)
+	if err != nil || len(shared) != 1 {
+		t.Fatalf("shared servers: %v %v", shared, err)
+	}
+	home, _ := os.UserHomeDir()
+	s := shared[0]
+	if s.URL != "http://127.0.0.1:47800/mcp" || s.Command != "node" || s.Args[0] != home+"/tool/serve.mjs" || s.Env["HEAP"] != "18G" || s.StartTimeoutSec != 120 || s.BearerTokenEnv != "RE_TOKEN" {
+		t.Fatalf("shared server: %+v", s)
+	}
+}
+
+func TestURLServerValidation(t *testing.T) {
+	for name, doc := range map[string]string{
+		"neither":         "[mcp_servers.x]\ntool_timeout_sec=1",
+		"both":            "[mcp_servers.x]\ncommand='c'\nurl='http://127.0.0.1:1/mcp'",
+		"bad url":         "[mcp_servers.x]\nurl='ftp://host/mcp'",
+		"url with env":    "[mcp_servers.x]\nurl='http://127.0.0.1:1/mcp'\nenv={A='b'}",
+		"token no url":    "[mcp_servers.x]\ncommand='c'\nbearer_token_env_var='T'",
+		"bad token var":   "[mcp_servers.x]\nurl='http://127.0.0.1:1/mcp'\nbearer_token_env_var='1-bad'",
+		"shared no url":   "[mcp_servers.x]\ncommand='c'\n[shared_mcp.x]\ncommand='s'",
+		"shared no srv":   "[shared_mcp.x]\ncommand='s'",
+		"shared no cmd":   "[mcp_servers.x]\nurl='http://127.0.0.1:1/mcp'\n[shared_mcp.x]\nargs=['a']",
+		"shared template": "[mcp_servers.x]\nurl='http://127.0.0.1:{{port}}/mcp'\n[shared_mcp.x]\ncommand='s'",
+		"shared health":   "[mcp_servers.x]\nurl='http://127.0.0.1:1/mcp'\n[shared_mcp.x]\ncommand='s'\nhealth_url='localhost:1'",
+	} {
+		if _, err := Parse([]byte(doc), t.TempDir()); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}

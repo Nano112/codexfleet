@@ -55,6 +55,14 @@ build_dir = "~/.cache/codexfleet-builds/{{task}}"
 # tool_timeout_sec = 600
 # default_tools_approval_mode = "approve"   # required in exec mode for tools needing approval
 
+# One server shared by every agent, reached over Streamable HTTP:
+# [mcp_servers.shared]
+# url = "http://127.0.0.1:47800/mcp"
+# bearer_token_env_var = "SHARED_TOKEN"     # optional
+# [shared_mcp.shared]                       # optional: launch starts it if it does not answer
+# command = "node"
+# args = ["/path/to/server.mjs", "serve", "--daemon"]
+
 [[tasks]]
 name = "smoke"
 scope = "Smoke test: create SMOKE.md containing 'ok', commit it, and report the commit hash."

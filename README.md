@@ -95,7 +95,7 @@ codexfleet clean TASK
 | Command | |
 |---|---|
 | `init [DIR] [--force]` | scaffold `codexfleet.toml` and `prompts/agent.md` |
-| `doctor [--json]` | codex found and logged in, git, flock, MCP commands and paths, base ref, tasks render, disk, RAM |
+| `doctor [--json]` | codex found and logged in, git, flock, MCP commands and paths, URL servers answering (and their token variables), base ref, tasks render, disk, RAM |
 | `render TASK...` | print the exact `codex exec` command (MCP env and long texts redacted) |
 | `launch TASK...\|--all [--fill] [--restart] [--dry-run]` | create worktrees and start agents. Tasks beyond `max_concurrent` are `queued`. `--fill` starts queued tasks while slots are free. |
 | `watch [--fill] [--idle M] [--ram GB] [--timeout D] [--poll D] [--json] [TASK...]` | block until a task exits (`EXITED`), goes idle (`IDLE`), or RAM drops (`LOWMEM`); print `WAKE …` lines and the status table. Exits since the last watch are reported at once. Each idle/low-memory episode is reported once. |
@@ -205,6 +205,18 @@ default_tools_approval_mode = "approve"  # default; auto|prompt|writes|approve
 enabled = true
 extra = { some_key = "value" }           # any other per-server key
 
+[mcp_servers.SHARED]        # or: a running Streamable HTTP server, shared by every agent
+url = "http://127.0.0.1:47800/mcp"
+bearer_token_env_var = "SHARED_TOKEN"    # optional; Codex reads the token from this variable
+tool_timeout_sec = 1800
+
+[shared_mcp.SHARED]         # optional: how to start the server behind mcp_servers.SHARED.url
+command = "node"
+args = ["~/tools/server.mjs", "serve", "--daemon"]
+env = { MAX_HEAP = "16G" }
+health_url = "http://127.0.0.1:47800/health"  # must answer 2xx; default: any reply from url
+start_timeout_sec = 120
+
 [[tasks]]
 name = "parser"             # [A-Za-z0-9][A-Za-z0-9._-]*
 scope = "what this agent owns"
@@ -242,7 +254,7 @@ Names are case-insensitive. An undefined variable or a cycle is an error.
 - Never share build caches between agents. Use per-task `CARGO_TARGET_DIR` and similar.
 - Memory adds up.
   - Keep `max_concurrent` modest.
-  - Every agent starts its own MCP servers, so cap heavy ones through their env (a max-heap setting).
+  - Every agent starts its own command MCP servers, so cap heavy ones through their env (a max-heap setting), or run one shared server for all agents: `url = ...` plus an optional `[shared_mcp.NAME]` that `launch` starts when it does not answer (codexfleet never stops it) and `doctor` health-checks.
   - Serialize heavy commands with `flock {{lock.heavy}} …`.
   - On `LOWMEM`, the wake line names the largest processes and their owner (task or `external`); `top` and `snapshot` show every task's heavy processes. It is often one runaway test binary or a VM, not the agents. Kill or skip that, and `note` the agents to avoid it (a note is read at the agent's next turn boundary, which can take minutes).
   - In an emergency, `pause TASK` freezes a task's tree at once. It stops growth but frees nothing; `stop` frees the memory, and `resume` continues the session later.

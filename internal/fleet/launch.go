@@ -368,6 +368,13 @@ func (f *Fleet) start(name, mode, msg string) error {
 	} else if r, baseSHA, err = f.prepare(name); err != nil {
 		return err
 	}
+	mcpNames := make([]string, 0, len(r.MCP))
+	for n := range r.MCP {
+		mcpNames = append(mcpNames, n)
+	}
+	if err := f.EnsureShared(mcpNames); err != nil {
+		return err
+	}
 	files := f.TaskFiles(name)
 	if err := os.MkdirAll(files.Dir, 0o700); err != nil {
 		return err

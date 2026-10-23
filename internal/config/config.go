@@ -17,19 +17,38 @@ import (
 const DefaultFileName = "codexfleet.toml"
 
 // MCPServer is one MCP server injected into every run with -c overrides.
+// A server is either a command Codex starts per run (Command, Args, Env) or a
+// running Streamable HTTP server it connects to (URL, BearerTokenEnvVar).
 type MCPServer struct {
-	Command           string            `toml:"command"`
-	Args              []string          `toml:"args"`
-	Env               map[string]string `toml:"env"`
-	StartupTimeoutSec int               `toml:"startup_timeout_sec"`
-	ToolTimeoutSec    int               `toml:"tool_timeout_sec"`
-	Enabled           *bool             `toml:"enabled"`
+	Command string            `toml:"command"`
+	Args    []string          `toml:"args"`
+	Env     map[string]string `toml:"env"`
+	URL     string            `toml:"url"`
+	// BearerTokenEnvVar names the variable Codex reads the bearer token from.
+	// The token itself never appears in argv or state.
+	BearerTokenEnvVar string `toml:"bearer_token_env_var"`
+	StartupTimeoutSec int    `toml:"startup_timeout_sec"`
+	ToolTimeoutSec    int    `toml:"tool_timeout_sec"`
+	Enabled           *bool  `toml:"enabled"`
 	// DefaultToolsApprovalMode is emitted as default_tools_approval_mode. In
 	// `codex exec` the approval policy is "never", so tools that need approval
 	// fail unless this is "approve". Values: auto, prompt, writes, approve.
 	DefaultToolsApprovalMode string `toml:"default_tools_approval_mode"`
 	// Extra holds any other per-server Codex keys, emitted verbatim as TOML.
 	Extra map[string]any `toml:"extra"`
+}
+
+// SharedMCP says how to start the long-lived server behind the URL of the
+// mcp_servers entry with the same name. Launch starts it when it does not
+// answer, and doctor health-checks it. One server then serves every agent.
+type SharedMCP struct {
+	Command string            `toml:"command"`
+	Args    []string          `toml:"args"`
+	Env     map[string]string `toml:"env"`
+	// HealthURL must answer 2xx when set; otherwise any HTTP reply from the
+	// server's URL counts as running.
+	HealthURL       string `toml:"health_url"`
+	StartTimeoutSec int    `toml:"start_timeout_sec"`
 }
 
 // Symlink is created inside each worktree: Path (relative to the worktree) -> Target.
@@ -127,6 +146,7 @@ type File struct {
 	Vars           map[string]string    `toml:"vars"`
 	Symlinks       []Symlink            `toml:"symlinks"`
 	MCPServers     map[string]MCPServer `toml:"mcp_servers"`
+	SharedMCP      map[string]SharedMCP `toml:"shared_mcp"`
 	// Locks are named lock files shared by all agents (e.g. to serialize heavy
 	// test suites). Each is created before launch, its directory is added as a
 	// writable dir, and it is exposed to prompts as {{lock.NAME}}.
@@ -280,6 +300,12 @@ func (c *Config) defaults() error {
 			c.MCPServers[name] = s
 		}
 	}
+	for name, s := range c.SharedMCP {
+		if s.StartTimeoutSec <= 0 {
+			s.StartTimeoutSec = 120
+			c.SharedMCP[name] = s
+		}
+	}
 	for name, p := range c.Locks {
 		c.Locks[name] = c.abs(p)
 	}
@@ -309,11 +335,47 @@ func (c *Config) validate() error {
 		if !mcpNameRE.MatchString(name) {
 			add("mcp_servers.%s: name must match [A-Za-z0-9_-]+", name)
 		}
-		if s.Command == "" {
-			add("mcp_servers.%s: command is required", name)
+		switch {
+		case s.Command == "" && s.URL == "":
+			add("mcp_servers.%s: set command (a server Codex starts) or url (a running server)", name)
+		case s.Command != "" && s.URL != "":
+			add("mcp_servers.%s: set command or url, not both", name)
+		case s.URL != "":
+			if !isHTTPURL(s.URL) {
+				add("mcp_servers.%s: url %q must be an http:// or https:// URL", name, s.URL)
+			}
+			if len(s.Args) > 0 || len(s.Env) > 0 {
+				add("mcp_servers.%s: args and env apply to command servers only (start a shared server with [shared_mcp.%s])", name, name)
+			}
+		}
+		if s.BearerTokenEnvVar != "" {
+			if s.URL == "" {
+				add("mcp_servers.%s: bearer_token_env_var needs url", name)
+			}
+			if !envKeyRE.MatchString(s.BearerTokenEnvVar) {
+				add("mcp_servers.%s: bearer_token_env_var %q is not a valid variable name", name, s.BearerTokenEnvVar)
+			}
 		}
 		if !validApproval[s.DefaultToolsApprovalMode] {
 			add("mcp_servers.%s: default_tools_approval_mode %q: want auto, prompt, writes or approve", name, s.DefaultToolsApprovalMode)
+		}
+	}
+	for name, s := range c.SharedMCP {
+		if srv, ok := c.MCPServers[name]; !ok || srv.URL == "" {
+			add("shared_mcp.%s: needs [mcp_servers.%s] with url", name, name)
+		} else if strings.Contains(srv.URL, "{{") {
+			add("shared_mcp.%s: the url of a shared server is fleet-wide and cannot use template variables", name)
+		}
+		if s.Command == "" {
+			add("shared_mcp.%s: command is required", name)
+		}
+		if s.HealthURL != "" && !isHTTPURL(s.HealthURL) {
+			add("shared_mcp.%s: health_url %q must be an http:// or https:// URL", name, s.HealthURL)
+		}
+		for k := range s.Env {
+			if !envKeyRE.MatchString(k) {
+				add("shared_mcp.%s: env key %q is not a valid variable name", name, k)
+			}
 		}
 	}
 	checkLinks := func(where string, ls []Symlink) {
@@ -372,6 +434,10 @@ func (c *Config) validate() error {
 		return errors.New("invalid fleet file:\n  " + strings.Join(errs, "\n  "))
 	}
 	return nil
+}
+
+func isHTTPURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
 // Task returns the named task.

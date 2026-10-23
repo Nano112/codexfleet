@@ -136,6 +136,10 @@ func Doctor(cfg *config.Config) []Check {
 	sort.Strings(names)
 	for _, n := range names {
 		s := cfg.MCPServers[n]
+		if s.URL != "" {
+			doctorURLServer(cfg, n, s, add)
+			continue
+		}
 		cmd := config.ExpandHome(s.Command)
 		if strings.Contains(cmd, "{{") {
 			add("warn", "mcp "+n, "command is templated (%s); not checked", cmd)
@@ -196,4 +200,41 @@ func PrintChecks(w io.Writer, cs []Check) bool {
 func firstLine(s string) string {
 	s, _, _ = strings.Cut(s, "\n")
 	return s
+}
+
+// doctorURLServer checks an MCP server Codex reaches by URL: its token
+// variable, and whether it answers (or, for a shared server, can be started).
+func doctorURLServer(cfg *config.Config, n string, s config.MCPServer, add func(level, name, format string, a ...any)) {
+	name := "mcp " + n
+	if s.BearerTokenEnvVar != "" && os.Getenv(s.BearerTokenEnvVar) == "" {
+		add("fail", name, "bearer_token_env_var %s is not set in this environment", s.BearerTokenEnvVar)
+		return
+	}
+	if strings.Contains(s.URL, "{{") {
+		add("warn", name, "url is templated (%s); not checked", s.URL)
+		return
+	}
+	shared, err := cfg.SharedServers([]string{n})
+	if err != nil {
+		add("fail", name, "%v", err)
+		return
+	}
+	health := SharedHealth{}
+	if len(shared) == 1 {
+		health = ProbeShared(shared[0])
+	} else {
+		health = probeURL(s.URL, "", s.BearerTokenEnvVar)
+	}
+	switch {
+	case health.Running:
+		add("ok", name, "%s answers (%s; approval mode %s)", s.URL, health.Detail, s.DefaultToolsApprovalMode)
+	case len(shared) == 1:
+		if _, err := exec.LookPath(shared[0].Command); err != nil {
+			add("fail", name, "%s; shared_mcp command %q not found", health.Detail, shared[0].Command)
+			return
+		}
+		add("warn", name, "%s; launch starts it with %s", health.Detail, shared[0].Command)
+	default:
+		add("fail", name, "%s (no [shared_mcp.%s] to start it)", health.Detail, n)
+	}
 }

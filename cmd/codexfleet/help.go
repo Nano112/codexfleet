@@ -11,7 +11,8 @@ directory). Existing files are kept unless --force.
 	"doctor": `Usage: codexfleet doctor [--json]
 
 Check the codex binary and its login, git, flock, every MCP server's command
-and paths, the base ref, that every task's prompt renders, disk and RAM.
+and paths (or, for a url server, that it answers and its token variable is
+set), the base ref, that every task's prompt renders, disk and RAM.
 Exits 1 when a check fails.
 `,
 	"render": `Usage: codexfleet render TASK...

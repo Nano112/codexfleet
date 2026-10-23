@@ -168,9 +168,11 @@ registered by launch, resume or adopt. Commands act on one fleet: pass
   caches.
 - **Memory.** Each agent can peak at many GB (test suites, analysis tools).
   - Set `max_concurrent` conservatively.
-  - Every agent starts its own copy of each MCP server, so cap heavy servers
-    through their env (e.g. a max-heap setting such as `ANALYZER_MAX_HEAP =
-    "6G"`).
+  - Every agent starts its own copy of each command MCP server, so cap heavy
+    servers through their env (e.g. a max-heap setting such as
+    `ANALYZER_MAX_HEAP = "6G"`), or point every agent at one shared server
+    with `url = "..."` (plus `[shared_mcp.NAME]` so `launch` starts it and
+    `doctor` checks it).
   - Tell agents to keep one large analysis target open at a time, and to close
     it when done.
   - Serialize heavy commands with a shared lock, and put this in the prompt:
@@ -227,6 +229,15 @@ env = { ANALYZER_MAX_HEAP = "6G" }
 startup_timeout_sec = 120
 tool_timeout_sec = 3600
 default_tools_approval_mode = "approve"   # default; exec mode cannot prompt
+
+# Or one server every agent shares, over Streamable HTTP (saves memory when
+# each agent would otherwise start its own heavy server):
+# [mcp_servers.shared]
+# url = "http://127.0.0.1:47800/mcp"
+# bearer_token_env_var = "SHARED_TOKEN"   # optional
+# [shared_mcp.shared]                     # optional: launch starts it if down
+# command = "node"
+# args = ["/path/to/server.mjs", "serve", "--daemon"]
 
 [subagents]                       # Codex helpers: -c agents.*
 max_depth = 1
