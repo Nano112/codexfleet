@@ -103,6 +103,30 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // When the pane isn't drawn (opened unasked on a terminal under 144 columns,
+  // or hidden), a one-line band above the prompt names each task.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const list = await read($, fleets)
+    const tasks = list.flatMap(f => visibleTasks(f))
+    if (tasks.length === 0 || e.props.hasSurvey) return next(e)
+    const pane = (await $.ui.panes()).find(p => p.id === PANE)
+    if (pane?.isPlaced) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Text dimColor>codex </Text>
+        {tasks.map((t, i) => (
+          <Text>
+            {i > 0 ? <Text dimColor> · </Text> : ''}
+            <Text color={statusColor(t.status)}>{t.task}</Text>
+            <Text dimColor>{` ${t.alive ? duration(t.idle_sec) + ' idle' : t.status}${t.commits > 0 ? ` ${t.commits}c` : ''}`}</Text>
+          </Text>
+        ))}
+        <Text dimColor>  (/fleet for details)</Text>
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const list = await read($, fleets)

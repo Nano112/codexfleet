@@ -1,6 +1,6 @@
 {
   "name": "codexfleet",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "See and drive a fleet of OpenAI Codex CLI agents (one git worktree each) from Claude Code: live pane, status line, /fleet command, and the codexfleet skill.",
   "author": { "name": "Nano112" },
   "homepage": "https://github.com/Nano112/codexfleet",
