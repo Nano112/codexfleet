@@ -121,7 +121,19 @@ export const register: Register = (on, options) => {
       return { text: HELP }
     }
     const hasFile = argv.includes('-f') || argv.some(a => a.startsWith('-f='))
-    const args = hasFile ? argv : [...argv, ...fileArgs]
+    let extra = fileArgs
+    if (!hasFile && extra.length === 0 && sub !== 'fleets') {
+      // No fleet in the session's directory: use the shown fleet that has the
+      // named task, else the only one shown.
+      const list = await read($, fleets)
+      if (!list.some(f => f.current)) {
+        const task = argv[1]
+        const owner = list.filter(f => task && f.status?.tasks.some(t => t.task === task))
+        const pick = owner.length === 1 ? owner[0] : list.length === 1 ? list[0] : undefined
+        if (pick) extra = ['-f', pick.path]
+      }
+    }
+    const args = hasFile ? argv : [...argv, ...extra]
     try {
       const r = await $.process.run([bin, ...args], { timeoutMs: 120000 })
       void refresh($, cfg)
