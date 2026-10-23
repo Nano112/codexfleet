@@ -1,0 +1,60 @@
+# codexfleet fleet file. Reference: https://github.com/Nano112/codexfleet#config-reference
+# Paths are relative to this file; ~ is expanded. {{vars}} work in prompts, env,
+# add_dirs, mkdirs, symlinks and MCP settings. ${ENV} in env values is read from
+# the launching shell, so secrets never need to live in this file.
+
+repo = "{{REPO}}"
+base = "{{BASE}}"
+worktree_root = "{{WORKTREE_ROOT}}"   # one worktree per task: <worktree_root>/<task>
+# state_dir = "<worktree_root>/.codexfleet"
+branch_prefix = "codex/"
+prompt_template = "prompts/agent.md"
+max_concurrent = 3
+mkdirs = ["{{build_dir}}"]        # created before launch
+add_dirs = ["{{build_dir}}"]      # extra writable dirs; the repo's .git is always added
+
+[codex]
+# bin = "codex"
+# model = "gpt-6-astra"           # default: whatever ~/.codex/config.toml says
+# reasoning_effort = "high"
+sandbox = "workspace-write"
+
+# Codex helper agents (multi_agent). Keep them few and shallow: helpers are for
+# narrow read-only investigations; the parent builds, tests and commits.
+# [subagents]
+# max_depth = 1            # helpers cannot spawn helpers
+# max_concurrent = 2       # per session
+# model = "gpt-6-astra"
+# reasoning_effort = "high"
+# max_runtime_secs = 5400
+
+[watch]
+idle_minutes = 45
+min_available_ram_gb = 4
+poll_seconds = 30
+
+# Shared named locks. Agents wrap heavy commands: flock {{lock.heavy}} cargo test ...
+[locks]
+heavy = "{{WORKTREE_ROOT}}/.locks/heavy.lock"
+
+[vars]
+build_dir = "~/.cache/codexfleet-builds/{{task}}"
+
+[env]
+# CARGO_TARGET_DIR = "{{build_dir}}"   # per-task build dirs: never share caches
+
+# [[symlinks]]
+# path = "fixtures"                 # inside the worktree
+# target = "~/data/fixtures"
+
+# [mcp_servers.example]
+# command = "node"
+# args = ["/path/to/server.mjs"]
+# env = { API_TOKEN = "${EXAMPLE_TOKEN}" }
+# startup_timeout_sec = 60
+# tool_timeout_sec = 600
+# default_tools_approval_mode = "approve"   # required in exec mode for tools needing approval
+
+[[tasks]]
+name = "smoke"
+scope = "Smoke test: create SMOKE.md containing 'ok', commit it, and report the commit hash."

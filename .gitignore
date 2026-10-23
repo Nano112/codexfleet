@@ -1,0 +1,8 @@
+/bin/
+/dist/
+*.test
+*.out
+.codexfleet/
+.claude-plugin/types/
+node_modules/
+.DS_Store

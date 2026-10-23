@@ -1,0 +1,13 @@
+{
+  "name": "codexfleet",
+  "description": "codexfleet: orchestrate parallel OpenAI Codex CLI agents from Claude Code",
+  "owner": {
+    "name": "Nano112"
+  },
+  "plugins": [
+    {
+      "name": "codexfleet",
+      "source": "./"
+    }
+  ]
+}

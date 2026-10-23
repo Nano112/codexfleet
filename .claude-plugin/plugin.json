@@ -1,0 +1,29 @@
+{
+  "name": "codexfleet",
+  "version": "0.2.0",
+  "description": "See and drive a fleet of OpenAI Codex CLI agents (one git worktree each) from Claude Code: live pane, status line, /fleet command, and the codexfleet skill.",
+  "author": { "name": "Nano112" },
+  "homepage": "https://github.com/Nano112/codexfleet",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "binary": {
+      "type": "string",
+      "title": "codexfleet binary",
+      "description": "Path to the codexfleet binary, or a name on PATH.",
+      "default": "codexfleet"
+    },
+    "fleetFile": {
+      "type": "string",
+      "title": "Fleet file",
+      "description": "Fleet file to show. Empty: search upward from the session's directory for codexfleet.toml.",
+      "default": ""
+    },
+    "pollSeconds": {
+      "type": "number",
+      "title": "Poll interval (seconds)",
+      "description": "How often the pane and status line refresh.",
+      "default": 15
+    }
+  }
+}

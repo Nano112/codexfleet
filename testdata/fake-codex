@@ -1,0 +1,42 @@
+#!/bin/sh
+# Fake `codex` for codexfleet tests. Emits a canned `codex exec --json` stream
+# shaped like a real run (codex-cli 0.155 event shapes), commits a file
+# in the current directory, and writes the -o last-message file.
+#   FAKE_CODEX_SLEEP  seconds to sleep mid-run (default 0)
+#   FAKE_CODEX_EXIT   exit status (default 0)
+#   FAKE_CODEX_ARGS   if set, append argv (one per line) to this file
+case "$1" in
+  --version) echo "codex-cli 0.0.0-fake"; exit 0 ;;
+  login) echo "Logged in using ChatGPT"; exit 0 ;;
+  queue)
+    if [ -n "$FAKE_CODEX_ARGS" ]; then { echo "---"; for a in "$@"; do printf '%s\n' "$a"; done; } >> "$FAKE_CODEX_ARGS"; fi
+    echo "Queued message for thread $3"; exit 0 ;;
+esac
+[ "$1" = exec ] || { echo "fake codex: unsupported: $*" >&2; exit 2; }
+if [ -n "$FAKE_CODEX_ARGS" ]; then
+  { echo "---"; for a in "$@"; do printf '%s\n' "$a"; done; } >> "$FAKE_CODEX_ARGS"
+fi
+out=""; mode=launch; tid="01a165ed-ebf2-7081-874b-7c67033abdf5"; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  [ "$prev" = "resume" ] && { mode=resume; tid="$a"; }
+  prev="$a"
+done
+echo "Reading additional input from stdin..." >&2
+task="${CODEXFLEET_TASK:-task}"
+printf '%s\n' '{"type":"thread.started","thread_id":"'"$tid"'"}'
+printf '%s\n' '{"type":"turn.started"}'
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I will run the steps in order.\n"}}'
+printf '%s\n' '{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"analyzer","tool":"list_symbols","arguments":{"path":"/x/libdemo.so","limit":1},"result":null,"error":null,"status":"in_progress"}}'
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"analyzer","tool":"list_symbols","arguments":{"path":"/x/libdemo.so","limit":1},"result":{"content":[{"type":"text","text":"42 symbols"}]},"error":null,"status":"completed"}}'
+printf '%s\n' '{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/usr/bin/bash -lc '"'"'echo $CARGO_TARGET_DIR'"'"'","aggregated_output":"","exit_code":null,"status":"in_progress"}}'
+if [ "${FAKE_CODEX_SLEEP:-0}" != 0 ]; then sleep "$FAKE_CODEX_SLEEP"; fi
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/usr/bin/bash -lc '"'"'echo $CARGO_TARGET_DIR'"'"'","aggregated_output":"'"${CARGO_TARGET_DIR:-unset}"'\n","exit_code":0,"status":"completed"}}'
+n=$(ls fake-*.txt 2>/dev/null | wc -l | tr -d ' ')
+echo "$mode $n" > "fake-$mode-$n.txt"
+git add "fake-$mode-$n.txt" >/dev/null 2>&1 && git commit -q -m "fake $mode $n" >/dev/null 2>&1
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"/usr/bin/bash -lc \"git commit -m fake\"","aggregated_output":"[codex/'"$task"' 25fb623] fake\n 1 file changed\n","exit_code":0,"status":"completed"}}'
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"Done ('"$mode"'). Commit created on codex/'"$task"'."}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1176093,"cached_input_tokens":1130624,"cache_write_input_tokens":0,"output_tokens":2029,"reasoning_output_tokens":310}}'
+[ -n "$out" ] && printf 'Done (%s). Commit created on codex/%s.\n' "$mode" "$task" > "$out"
+exit "${FAKE_CODEX_EXIT:-0}"

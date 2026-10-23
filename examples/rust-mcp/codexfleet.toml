@@ -1,0 +1,90 @@
+# Example fleet: a Rust workspace, one Codex agent per refactoring task, each
+# with its own CARGO_TARGET_DIR, a shared lock for heavy test runs, and one
+# MCP server (e.g. a code-analysis or reverse-engineering tool) with a memory cap.
+#
+#   codexfleet -f examples/rust-mcp/codexfleet.toml doctor
+#   codexfleet -f examples/rust-mcp/codexfleet.toml launch smoke   # always first
+#   codexfleet -f examples/rust-mcp/codexfleet.toml launch --all
+#   codexfleet -f examples/rust-mcp/codexfleet.toml watch --fill
+
+repo = "~/code/my-rust-workspace"
+base = "main"
+worktree_root = "~/code/my-rust-workspace-fleet"   # worktrees: <root>/<task>
+branch_prefix = "codex/"
+prompt_template = "prompt.md"
+max_concurrent = 3                                  # a full test run can use many GB
+mkdirs = ["{{target}}"]
+add_dirs = ["{{target}}"]                           # + the repo's .git, always
+
+[codex]
+# model = "gpt-6-astra"            # default: ~/.codex/config.toml
+reasoning_effort = "high"
+sandbox = "workspace-write"
+
+# Helper agents: shallow and few. Helpers investigate (read-only); the parent
+# agent builds, tests and commits. Per task: [tasks.subagents].
+[subagents]
+max_depth = 1
+max_concurrent = 2
+reasoning_effort = "high"
+max_runtime_secs = 5400
+
+[watch]
+idle_minutes = 45
+min_available_ram_gb = 6
+poll_seconds = 30
+
+# Serialize heavy commands across agents: `flock {{lock.heavy}} cargo test ...`
+[locks]
+heavy = "~/code/my-rust-workspace-fleet/.locks/heavy.lock"
+
+[vars]
+target = "~/.cache/my-rust-workspace-targets/{{task}}"   # per-task build dir
+
+[env]
+CARGO_TARGET_DIR = "{{target}}"
+CARGO_BUILD_JOBS = "4"
+CARGO_NET_OFFLINE = "true"
+
+[[symlinks]]
+path = "fixtures"                     # large test inputs kept outside the repo
+target = "~/data/my-rust-workspace-fixtures"
+
+# One MCP server for every agent. Replace command/args/env with your own.
+[mcp_servers.analyzer]
+command = "node"
+args = ["/path/to/analyzer-mcp/server.js", "mcp"]
+startup_timeout_sec = 120
+tool_timeout_sec = 3600
+default_tools_approval_mode = "approve"   # exec mode cannot ask; approval-gated tools fail otherwise
+[mcp_servers.analyzer.env]
+ANALYZER_MAX_HEAP = "6G"                  # cap the server's memory: every agent starts its own copy
+ANALYZER_API_TOKEN = "${ANALYZER_API_TOKEN}"   # from your shell; never stored by codexfleet
+
+# Smoke task: exercises the MCP server (including an approval-gated tool),
+# the env, the lock and a commit. Run it alone before the real fleet.
+[[tasks]]
+name = "smoke"
+prompt = """
+Smoke test. Do exactly these steps and report each result in one line:
+1. Call one read-only `analyzer` MCP tool, then one that writes or annotates
+   (it needs approval: it must succeed, not fail with "requires approval").
+2. Print `$CARGO_TARGET_DIR` and the current branch.
+3. Run `flock {{lock.heavy}} true` and report its exit status.
+4. Create `docs/smoke-{{task}}.txt` containing `ok` and commit it on {{branch}}. Never push.
+"""
+
+[[tasks]]
+name = "errors"
+scope = "Replace the stringly-typed errors in crates/core with a thiserror enum; keep the public API."
+
+[[tasks]]
+name = "parser"
+scope = "Make the config parser accept trailing commas and report line/column on errors."
+
+[[tasks]]
+name = "perf"
+scope = "Remove the per-record allocation in crates/io/src/reader.rs; show a benchmark before and after."
+disable_mcp = ["analyzer"]   # this task does not need the MCP server
+[tasks.subagents]
+max_concurrent = 1           # at most one helper for a benchmark-sensitive task
