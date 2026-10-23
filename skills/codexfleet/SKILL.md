@@ -80,8 +80,12 @@ Codex must be installed and logged in (`codex login`). codexfleet never edits
    - **IDLE.** Run `logs TASK --tail 20`. If it's waiting on something,
      `note TASK "…"`. If it's truly stuck, `stop TASK` and then
      `resume TASK "…"`.
-   - **LOWMEM.** Find the real offender before stopping anyone. It is often a
-     single process (say, one 21 GB test binary), not the agents themselves:
+   - **LOWMEM.** Find the real offender before stopping anyone. The wake line
+     names the largest processes and who owns each, a task or `external`
+     (`LOWMEM 1.8G<4.0G; top: qemu 24.0G (external), java 6.1G (parser), …`).
+     It is often a single process (a VM, one 21 GB test binary), not the
+     agents. `codexfleet snapshot` (JSON) or `codexfleet top --once` also show
+     every task's heavy processes (JVMs, anything over 2 GB). By hand:
      ```sh
      ps -eo pid,rss,comm --sort=-rss | head        # biggest processes (RSS in KB)
      readlink /proc/<pid>/cwd                      # which worktree, so which task (Linux)
@@ -94,6 +98,11 @@ Codex must be installed and logged in (`codex login`). codexfleet never edits
        process tree: cargo, rustc, analysis servers). `resume TASK "continue
        where you left off"` later, when RAM recovers. The session and worktree
        survive.
+     - In an emergency, `pause TASK` freezes its whole tree at once (SIGSTOP):
+       it stops growing, but frees **nothing**; `unpause TASK` continues it.
+       Use it to buy time, then `stop` + `resume` whichever task must yield.
+       `note` is no emergency brake: it is read at the agent's next turn
+       boundary, which can take minutes.
      - Tell every agent with `note` to skip memory-heavy tests, and to keep at
        most one large analysis target open in heavy MCP servers.
 7. **Verify independently, before merging.** In the task's worktree (or after
@@ -247,24 +256,33 @@ An undefined variable is an error at launch.
 codexfleet init | doctor | render TASK
 codexfleet launch TASK...|--all [--fill] [--restart] [--dry-run]
 codexfleet watch [--fill] [--idle M] [--ram GB] [--timeout 2h]
-codexfleet status [--json]
+codexfleet status [--json [--detail]]
+codexfleet snapshot            # JSON: tasks, recent events, tokens, MCP counts, memory owners
+codexfleet top [--once]        # full-screen dashboard (for the user's own terminal)
 codexfleet logs TASK [--tail N] [--full] [--run N] [--raw]
 codexfleet result TASK | commits TASK [--stat] | diff TASK [--stat]
 codexfleet note TASK "msg"     # running agent: queue a message, no restart
 codexfleet adopt TASK --worktree P --branch B --session ID [--pid N|@file] [--events F] [--last-message F]
 codexfleet fleets [--json] [--live]
 codexfleet stop TASK... | resume TASK "msg" [--file F]   # resume: exited agent
+codexfleet pause TASK... | unpause TASK...   # SIGSTOP/SIGCONT the tree; frees nothing
 codexfleet clean TASK... [--force] [--purge]
 codexfleet lock FILE -- CMD...
 ```
 
 A leading `-f FILE`, or `$CODEXFLEET_FILE`, selects the fleet file. Otherwise
 `codexfleet.toml` is found by searching upward from the current directory.
+`codexfleet CMD --help` describes any command.
 
 In Claude Code with the plugin installed:
-- `/fleet` opens the live pane.
-- `/fleet status|launch|stop|note|resume|logs|result|diff|clean|doctor` runs those
-  commands.
+- Above the prompt, one row per Codex agent, styled like Claude Code's own
+  agent list (`● codex parser  Rewrote the parser  12m 3s · ↓ 45.3k tokens · 2 commits`),
+  and a summary at the end of the hint line.
+- `/fleet` opens the full pane (task table, memory, a selected task's events,
+  commits and final message); `/fleet show TASK` selects one.
+- `/fleet status|launch|stop|pause|note|resume|logs|result|diff|clean|doctor`
+  runs those commands.
 
-The pane and status line refresh on their own. Codex agents do **not** appear
-in Claude's native agent/task list; the pane is their view.
+These refresh on their own. Codex agents do **not** appear in Claude's native
+agent/task list; the band and pane are their view. For a dashboard in its own
+terminal window, suggest `codexfleet top` to the user.
